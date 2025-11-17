@@ -1,12 +1,13 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List, Literal, Dict, Any
 from bson import ObjectId
 from datetime import datetime, timedelta, timezone
 
-from database import db, create_document, get_documents
+from database import db, create_document
 from schemas import User, Clientprofile, Message, Notification, Document, Invoice, Workrequest, Quote, Token, Kanbantask
 
 app = FastAPI()
@@ -18,6 +19,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure uploads dir exists
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ---------------------- Realtime (WebSockets) ----------------------
+class ConnectionManager:
+    def __init__(self):
+        # client_id -> set of websockets
+        self.active: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, client_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active.setdefault(client_id, []).append(websocket)
+
+    def disconnect(self, client_id: str, websocket: WebSocket):
+        arr = self.active.get(client_id)
+        if not arr:
+            return
+        if websocket in arr:
+            arr.remove(websocket)
+        if not arr:
+            self.active.pop(client_id, None)
+
+    async def broadcast(self, client_id: str, message: Dict[str, Any]):
+        conns = list(self.active.get(client_id, []))
+        for ws in conns:
+            try:
+                await ws.send_json(message)
+            except RuntimeError:
+                # skip dead
+                pass
+
+manager = ConnectionManager()
 
 # Helpers
 
@@ -39,6 +74,12 @@ def serialize(doc: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(v, datetime):
             doc[k] = v.isoformat()
     return doc
+
+
+def require_pm_or_admin(request: Request):
+    role = request.headers.get("X-User-Role", "")
+    if role not in ("admin", "project_manager"):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
 
 
 @app.get("/")
@@ -165,8 +206,30 @@ def request_otp(payload: RequestOtpPayload):
         "expires_at": expires,
         "created_at": datetime.now(timezone.utc)
     })
-    # In a real app, email the code. For demo, log it.
-    print(f"[OTP] Verification code for {payload.email}: {code}")
+
+    # Try to email via SendGrid if configured, otherwise log
+    sg_key = os.getenv("SENDGRID_API_KEY")
+    from_email = os.getenv("EMAIL_FROM", "no-reply@example.com")
+    if sg_key and payload.email:
+        try:
+            import requests
+            data = {
+                "personalizations": [{"to": [{"email": payload.email}], "subject": "Your verification code"}],
+                "from": {"email": from_email},
+                "content": [{"type": "text/plain", "value": f"Your login code is: {code}. It expires in 10 minutes."}],
+            }
+            requests.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={"Authorization": f"Bearer {sg_key}", "Content-Type": "application/json"},
+                json=data,
+                timeout=5,
+            )
+        except Exception as e:
+            print(f"[OTP] Email send fallback due to error: {e}")
+            print(f"[OTP] Verification code for {payload.email}: {code}")
+    else:
+        print(f"[OTP] Verification code for {payload.email}: {code}")
+
     return {"status": "sent"}
 
 
@@ -205,6 +268,14 @@ def me(token: str):
         raise HTTPException(status_code=401, detail="Invalid token")
     user = db["user"].find_one({"_id": ObjectId(t["user_id"])})
     return serialize(user)
+
+
+# ---------------------- Tenant Resolution ----------------------
+@app.get("/tenant/resolve")
+def resolve_tenant(host: Optional[str] = None):
+    host = host or os.getenv("HOSTNAME") or ""
+    prof = db["clientprofile"].find_one({"custom_domain": host})
+    return serialize(prof) if prof else {}
 
 
 # ---------------------- Clients ----------------------
@@ -265,7 +336,9 @@ def get_client(client_id: str):
 
 
 @app.patch("/clients/{client_id}")
-def update_client(client_id: str, payload: UpdateClientPayload):
+def update_client(request: Request, client_id: str, payload: UpdateClientPayload):
+    # Restrict branding updates to PM/Admin
+    require_pm_or_admin(request)
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         return get_client(client_id)
@@ -274,7 +347,45 @@ def update_client(client_id: str, payload: UpdateClientPayload):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Client not found")
     prof = db["clientprofile"].find_one({"_id": oid(client_id)})
+    # Notify branding change
+    try:
+        import asyncio
+        asyncio.create_task(manager.broadcast(client_id, {"type": "brand:update"}))
+    except Exception:
+        pass
     return serialize(prof)
+
+
+# Logo upload endpoints
+@app.post("/clients/{client_id}/logo")
+async def upload_logo(request: Request, client_id: str, file: UploadFile = File(...)):
+    # Restrict to PM/Admin
+    require_pm_or_admin(request)
+    # Save file to uploads directory
+    ext = os.path.splitext(file.filename)[1].lower()
+    safe_name = f"{client_id}_logo{ext or '.png'}"
+    dest = os.path.join(UPLOAD_DIR, safe_name)
+    with open(dest, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    # Construct a simple local URL path
+    url_path = f"/uploads/{safe_name}"
+    # Persist on client profile
+    db["clientprofile"].update_one({"_id": oid(client_id)}, {"$set": {"logo_url": url_path, "updated_at": datetime.now(timezone.utc)}})
+    # Broadcast change
+    try:
+        import asyncio
+        asyncio.create_task(manager.broadcast(client_id, {"type": "brand:logo", "url": url_path}))
+    except Exception:
+        pass
+    return {"url": url_path}
+
+@app.get("/uploads/{filename}")
+def get_uploaded_file(filename: str):
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path)
 
 
 # Seed three dummy clients if missing
@@ -514,7 +625,8 @@ def kanban_list(client_id: str, status: Optional[str] = None, search: Optional[s
 
 
 @app.post("/kanban/tasks")
-def kanban_create(payload: KanbanCreatePayload):
+def kanban_create(request: Request, payload: KanbanCreatePayload):
+    require_pm_or_admin(request)
     # Compute next position in "todo" by default
     column = "todo"
     last = db["kanbantask"].find({"client_id": payload.client_id, "status": column}).sort("position", -1).limit(1)
@@ -533,11 +645,15 @@ def kanban_create(payload: KanbanCreatePayload):
         position=next_pos,
     )
     tid = create_document("kanbantask", task)
+    # Notify
+    import asyncio
+    asyncio.create_task(manager.broadcast(payload.client_id, {"type": "kanban:create", "id": tid}))
     return {"id": tid}
 
 
 @app.patch("/kanban/tasks/{task_id}")
-def kanban_update(task_id: str, payload: KanbanUpdatePayload):
+def kanban_update(request: Request, task_id: str, payload: KanbanUpdatePayload):
+    require_pm_or_admin(request)
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         t = db["kanbantask"].find_one({"_id": oid(task_id)})
@@ -549,6 +665,9 @@ def kanban_update(task_id: str, payload: KanbanUpdatePayload):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Task not found")
     t = db["kanbantask"].find_one({"_id": oid(task_id)})
+    # Notify
+    import asyncio
+    asyncio.create_task(manager.broadcast(t["client_id"], {"type": "kanban:update", "id": str(t["_id"]) }))
     return serialize(t)
 
 
@@ -559,7 +678,8 @@ class KanbanMovePayload(BaseModel):
 
 
 @app.post("/kanban/tasks/{task_id}/move")
-def kanban_move(task_id: str, payload: KanbanMovePayload):
+def kanban_move(request: Request, task_id: str, payload: KanbanMovePayload):
+    require_pm_or_admin(request)
     # Determine new position based on neighbors
     to_col = payload.to_status
     pos: float
@@ -586,7 +706,22 @@ def kanban_move(task_id: str, payload: KanbanMovePayload):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Task not found")
     t = db["kanbantask"].find_one({"_id": oid(task_id)})
+    # Notify
+    import asyncio
+    asyncio.create_task(manager.broadcast(t["client_id"], {"type": "kanban:move", "id": str(t["_id"]) }))
     return serialize(t)
+
+
+# WebSocket endpoint for realtime kanban updates
+@app.websocket("/ws/kanban/{client_id}")
+async def ws_kanban(websocket: WebSocket, client_id: str):
+    await manager.connect(client_id, websocket)
+    try:
+        while True:
+            # Keep alive / optional client messages
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(client_id, websocket)
 
 
 if __name__ == "__main__":
