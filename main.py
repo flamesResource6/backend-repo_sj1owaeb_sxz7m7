@@ -140,6 +140,13 @@ class CreateClientPayload(BaseModel):
     logo_url: Optional[str] = None
 
 
+class UpdateClientPayload(BaseModel):
+    display_name: Optional[str] = None
+    theme_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
 @app.get("/clients")
 def list_clients() -> List[Dict[str, Any]]:
     profiles = list(db["clientprofile"].aggregate([
@@ -177,6 +184,19 @@ def get_client(client_id: str):
     prof = db["clientprofile"].find_one({"_id": oid(client_id)})
     if not prof:
         raise HTTPException(status_code=404, detail="Client not found")
+    return serialize(prof)
+
+
+@app.patch("/clients/{client_id}")
+def update_client(client_id: str, payload: UpdateClientPayload):
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not update:
+        return get_client(client_id)
+    update["updated_at"] = datetime.now(timezone.utc)
+    res = db["clientprofile"].update_one({"_id": oid(client_id)}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Client not found")
+    prof = db["clientprofile"].find_one({"_id": oid(client_id)})
     return serialize(prof)
 
 
