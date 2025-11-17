@@ -180,6 +180,70 @@ def get_client(client_id: str):
     return serialize(prof)
 
 
+# Seed three dummy clients if missing
+
+def ensure_dummy_clients():
+    samples = [
+        {
+            "email": "acme.facilities@example.com",
+            "name": "Acme Facilities",
+            "company": "Acme Facilities Ltd",
+            "theme_color": "#F5C518",  # safety yellow
+            "logo_url": "https://dummyimage.com/120x120/F5C518/0b1026&text=AF",
+        },
+        {
+            "email": "nottingham.builders@example.com",
+            "name": "Nottingham Builders",
+            "company": "Nottingham Builders Co",
+            "theme_color": "#0ea5e9",  # sky
+            "logo_url": "https://dummyimage.com/120x120/0ea5e9/0b1026&text=NB",
+        },
+        {
+            "email": "trent.cafes@example.com",
+            "name": "Trent Cafe Group",
+            "company": "Trent Cafe Group",
+            "theme_color": "#22c55e",  # green
+            "logo_url": "https://dummyimage.com/120x120/22c55e/0b1026&text=TC",
+        },
+    ]
+    for s in samples:
+        # If user exists, skip
+        existing_user = db["user"].find_one({"email": s["email"]})
+        if existing_user:
+            continue
+        # Create user
+        u = User(
+            name=s["name"],
+            email=s["email"],
+            password_hash="demo",
+            role="client",
+            company=s.get("company"),
+            is_active=True,
+        )
+        user_id = create_document("user", u)
+        # Create client profile
+        prof = Clientprofile(
+            user_id=str(user_id),
+            display_name=s["name"],
+            theme_color=s.get("theme_color") or "#4f46e5",
+            logo_url=s.get("logo_url"),
+            notes="Dummy seeded client",
+        )
+        create_document("clientprofile", prof)
+
+
+@app.on_event("startup")
+async def startup_seed():
+    try:
+        # Only seed if there are fewer than 3 client profiles
+        count = db["clientprofile"].count_documents({})
+        if count < 3:
+            ensure_dummy_clients()
+    except Exception:
+        # If DB not available, ignore
+        pass
+
+
 # ---------------------- Messages (Chat) ----------------------
 class MessagePayload(BaseModel):
     client_id: str

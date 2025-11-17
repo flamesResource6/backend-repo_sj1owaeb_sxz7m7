@@ -1,11 +1,25 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [198] using StatReload
-INFO:     Started server process [200]
+INFO:     Started reloader process [275] using StatReload
+INFO:     Started server process [277]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:58162 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:58146 - "GET /clients HTTP/1.1" 200 OK
-INFO:     172.20.0.1:58146 - "GET /clients HTTP/1.1" 200 OK
-INFO:     172.20.0.1:58168 - "GET /clients HTTP/1.1" 200 OK
-INFO:     172.20.0.1:58168 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57624 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57624 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57636 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:57624 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57624 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57638 - "GET /notifications?user_id=691a75c7854be8c6ad4df514 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57638 - "GET /messages?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37946 - "GET /notifications?user_id=691a75c7854be8c6ad4df514 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37948 - "GET /invoices?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37962 - "GET /work-requests?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:57638 - "GET /messages?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37948 - "GET /invoices?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37962 - "GET /work-requests?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37924 - "GET /documents?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37938 - "GET /quotes?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37924 - "GET /documents?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37962 - "GET /quotes?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51628 - "GET /notifications?user_id=691a75c7854be8c6ad4df514 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51628 - "GET /notifications?user_id=691a75c7854be8c6ad4df514 HTTP/1.1" 200 OK
