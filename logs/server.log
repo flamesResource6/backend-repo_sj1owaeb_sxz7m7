@@ -1,11 +1,26 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [651] using StatReload
-INFO:     Started server process [653]
+INFO:     Started reloader process [769] using StatReload
+INFO:     Started server process [771]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:51276 - "GET /clients HTTP/1.1" 200 OK
-INFO:     172.20.0.1:51276 - "GET /clients HTTP/1.1" 200 OK
-INFO:     172.20.0.1:51286 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:53380 - "GET /clients HTTP/1.1" 200 OK
-INFO:     172.20.0.1:53380 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:45784 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:45784 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:45792 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:55676 - "GET /clients HTTP/1.1" 200 OK
+INFO:     172.20.0.1:55676 - "GET /clients HTTP/1.1" 200 OK
+WARNING:  Unsupported upgrade request.
+WARNING:  No supported WebSocket library detected. Please use "pip install 'uvicorn[standard]'", or install 'websockets' or 'wsproto' manually.
+INFO:     172.20.0.1:51798 - "GET /ws/kanban/691a7896eee228ce4798e068 HTTP/1.1" 404 Not Found
+INFO:     172.20.0.1:51756 - "GET /kanban/tasks?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51780 - "GET /work-requests?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51784 - "GET /invoices?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51790 - "GET /quotes?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51756 - "GET /kanban/tasks?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51780 - "GET /work-requests?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51784 - "GET /invoices?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51772 - "GET /messages?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51770 - "GET /documents?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51772 - "GET /messages?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51770 - "GET /documents?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:51790 - "GET /quotes?client_id=691a7896eee228ce4798e068 HTTP/1.1" 200 OK
