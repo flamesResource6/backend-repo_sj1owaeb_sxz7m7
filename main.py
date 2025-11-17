@@ -7,7 +7,7 @@ from bson import ObjectId
 from datetime import datetime, timedelta, timezone
 
 from database import db, create_document, get_documents
-from schemas import User, Clientprofile, Message, Notification, Document, Invoice, Workrequest, Quote, Token
+from schemas import User, Clientprofile, Message, Notification, Document, Invoice, Workrequest, Quote, Token, Kanbantask
 
 app = FastAPI()
 
@@ -78,7 +78,7 @@ class LoginPayload(BaseModel):
     email: str
     name: Optional[str] = None
     password: Optional[str] = None
-    role: Optional[Literal["admin", "client"]] = None
+    role: Optional[Literal["admin", "project_manager", "client", "viewer"]] = None
     company: Optional[str] = None
 
 
@@ -107,6 +107,7 @@ def login(payload: LoginPayload):
                 theme_color="#4f46e5",
                 logo_url=None,
                 notes=None,
+                custom_domain=None,
             )
             create_document("clientprofile", prof)
 
@@ -119,6 +120,81 @@ def login(payload: LoginPayload):
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
     })
+    return {"token": token_value, "user": serialize(user)}
+
+
+class RequestOtpPayload(BaseModel):
+    email: str
+    name: Optional[str] = None
+    role: Optional[Literal["admin", "project_manager", "client", "viewer"]] = None
+
+
+@app.post("/auth/request-otp")
+def request_otp(payload: RequestOtpPayload):
+    # Create user if not exists
+    user = db["user"].find_one({"email": payload.email})
+    if not user:
+        new_user = User(
+            name=payload.name or payload.email.split("@")[0],
+            email=payload.email,
+            password_hash="otp",
+            role=payload.role or "client",
+            company=None,
+            is_active=True,
+        )
+        uid = create_document("user", new_user)
+        user = db["user"].find_one({"_id": ObjectId(uid)})
+        if new_user.role == "client":
+            prof = Clientprofile(
+                user_id=str(uid),
+                display_name=new_user.name,
+                theme_color="#4f46e5",
+                logo_url=None,
+                notes=None,
+                custom_domain=None,
+            )
+            create_document("clientprofile", prof)
+
+    # Generate a 6-digit code valid for 10 minutes
+    code = f"{int.from_bytes(os.urandom(3), 'big') % 1000000:06d}"
+    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+    db["otp"].delete_many({"email": payload.email})
+    db["otp"].insert_one({
+        "email": payload.email,
+        "code": code,
+        "expires_at": expires,
+        "created_at": datetime.now(timezone.utc)
+    })
+    # In a real app, email the code. For demo, log it.
+    print(f"[OTP] Verification code for {payload.email}: {code}")
+    return {"status": "sent"}
+
+
+class VerifyOtpPayload(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/auth/verify-otp")
+def verify_otp(payload: VerifyOtpPayload):
+    rec = db["otp"].find_one({"email": payload.email, "code": payload.code})
+    if not rec or (rec.get("expires_at") and rec["expires_at"] < datetime.now(timezone.utc)):
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+    user = db["user"].find_one({"email": payload.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Issue token
+    token_value = os.urandom(12).hex()
+    expires = datetime.now(timezone.utc) + timedelta(days=7)
+    db["token"].insert_one({
+        "user_id": str(user["_id"]),
+        "token": token_value,
+        "expires_at": expires,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    })
+    # Cleanup used code
+    db["otp"].delete_many({"email": payload.email})
     return {"token": token_value, "user": serialize(user)}
 
 
@@ -145,6 +221,7 @@ class UpdateClientPayload(BaseModel):
     theme_color: Optional[str] = None
     logo_url: Optional[str] = None
     notes: Optional[str] = None
+    custom_domain: Optional[str] = None
 
 
 @app.get("/clients")
@@ -152,7 +229,6 @@ def list_clients() -> List[Dict[str, Any]]:
     profiles = list(db["clientprofile"].aggregate([
         {"$lookup": {"from": "user", "localField": "user_id", "foreignField": "_id", "as": "user_obj"}},
     ]))
-    # user_id in profiles is a string; ensure comparison when joining - keep as is
     return [serialize(p) for p in profiles]
 
 
@@ -174,6 +250,7 @@ def create_client(payload: CreateClientPayload):
         theme_color=payload.theme_color,
         logo_url=payload.logo_url,
         notes=None,
+        custom_domain=None,
     )
     prof_id = create_document("clientprofile", prof)
     return {"user_id": user_id, "profile_id": prof_id}
@@ -248,6 +325,7 @@ def ensure_dummy_clients():
             theme_color=s.get("theme_color") or "#4f46e5",
             logo_url=s.get("logo_url"),
             notes="Dummy seeded client",
+            custom_domain=None,
         )
         create_document("clientprofile", prof)
 
@@ -268,7 +346,7 @@ async def startup_seed():
 class MessagePayload(BaseModel):
     client_id: str
     sender_id: str
-    sender_role: Literal["admin", "client"]
+    sender_role: Literal["admin", "project_manager", "client", "viewer"]
     content: str
 
 
@@ -399,6 +477,116 @@ def authorize_quote(quote_id: str, authorize: bool = True):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Quote not found")
     return {"status": status}
+
+
+# ---------------------- Kanban Board ----------------------
+class KanbanCreatePayload(BaseModel):
+    client_id: str
+    title: str
+    description: Optional[str] = ""
+    due_date: Optional[datetime] = None
+    assignees: Optional[List[str]] = []
+
+
+class KanbanUpdatePayload(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[Literal["todo", "in_progress", "under_review", "completed"]] = None
+    due_date: Optional[datetime] = None
+    assignees: Optional[List[str]] = None
+    position: Optional[float] = None
+
+
+@app.get("/kanban/tasks")
+def kanban_list(client_id: str, status: Optional[str] = None, search: Optional[str] = None, assignee: Optional[str] = None):
+    q: Dict[str, Any] = {"client_id": client_id}
+    if status:
+        q["status"] = status
+    if assignee:
+        q["assignees"] = {"$in": [assignee]}
+    if search:
+        q["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}},
+        ]
+    tasks = db["kanbantask"].find(q).sort([("status", 1), ("position", 1), ("created_at", 1)])
+    return [serialize(t) for t in tasks]
+
+
+@app.post("/kanban/tasks")
+def kanban_create(payload: KanbanCreatePayload):
+    # Compute next position in "todo" by default
+    column = "todo"
+    last = db["kanbantask"].find({"client_id": payload.client_id, "status": column}).sort("position", -1).limit(1)
+    next_pos = 1.0
+    if last:
+        last_list = list(last)
+        if last_list:
+            next_pos = float(last_list[0].get("position", 0)) + 1.0
+    task = Kanbantask(
+        client_id=payload.client_id,
+        title=payload.title,
+        description=payload.description or "",
+        status="todo",
+        due_date=payload.due_date,
+        assignees=payload.assignees or [],
+        position=next_pos,
+    )
+    tid = create_document("kanbantask", task)
+    return {"id": tid}
+
+
+@app.patch("/kanban/tasks/{task_id}")
+def kanban_update(task_id: str, payload: KanbanUpdatePayload):
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not update:
+        t = db["kanbantask"].find_one({"_id": oid(task_id)})
+        if not t:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return serialize(t)
+    update["updated_at"] = datetime.now(timezone.utc)
+    res = db["kanbantask"].update_one({"_id": oid(task_id)}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Task not found")
+    t = db["kanbantask"].find_one({"_id": oid(task_id)})
+    return serialize(t)
+
+
+class KanbanMovePayload(BaseModel):
+    to_status: Literal["todo", "in_progress", "under_review", "completed"]
+    before_id: Optional[str] = None
+    after_id: Optional[str] = None
+
+
+@app.post("/kanban/tasks/{task_id}/move")
+def kanban_move(task_id: str, payload: KanbanMovePayload):
+    # Determine new position based on neighbors
+    to_col = payload.to_status
+    pos: float
+    if payload.before_id and payload.after_id:
+        before = db["kanbantask"].find_one({"_id": oid(payload.before_id)})
+        after = db["kanbantask"].find_one({"_id": oid(payload.after_id)})
+        if not (before and after):
+            raise HTTPException(status_code=400, detail="Invalid neighbor ids")
+        pos = (float(before.get("position", 0)) + float(after.get("position", 0))) / 2.0
+    elif payload.before_id:
+        before = db["kanbantask"].find_one({"_id": oid(payload.before_id)})
+        pos = float(before.get("position", 0)) - 1.0
+    elif payload.after_id:
+        after = db["kanbantask"].find_one({"_id": oid(payload.after_id)})
+        pos = float(after.get("position", 0)) + 1.0
+    else:
+        # Append to end of column
+        last = db["kanbantask"].find({"status": to_col}).sort("position", -1).limit(1)
+        pos = 1.0
+        last_list = list(last)
+        if last_list:
+            pos = float(last_list[0].get("position", 0)) + 1.0
+    res = db["kanbantask"].update_one({"_id": oid(task_id)}, {"$set": {"status": to_col, "position": pos, "updated_at": datetime.now(timezone.utc)}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Task not found")
+    t = db["kanbantask"].find_one({"_id": oid(task_id)})
+    return serialize(t)
 
 
 if __name__ == "__main__":
